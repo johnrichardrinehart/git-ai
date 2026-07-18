@@ -32,6 +32,27 @@ pub fn notes_path_for_object(oid: &str) -> String {
     }
 }
 
+fn all_note_paths_for_object(oid: &str) -> Vec<String> {
+    // Git may deepen a notes tree by adding two-hex directory components as it
+    // grows. Keep flat first for read compatibility, followed by increasingly
+    // deep fanout paths through the maximum depth supported by the object ID.
+    let mut paths = vec![oid.to_string()];
+    if oid.len() <= 2 {
+        return paths;
+    }
+
+    paths.push(notes_path_for_object(oid));
+
+    let mut prefix = oid[..2].to_string();
+    for prefix_end in (4..oid.len()).step_by(2) {
+        prefix.push('/');
+        prefix.push_str(&oid[prefix_end - 2..prefix_end]);
+        paths.push(format!("{}/{}", prefix, &oid[prefix_end..]));
+    }
+
+    paths
+}
+
 #[doc(hidden)]
 pub fn flat_note_pathspec_for_commit(commit_sha: &str) -> String {
     flat_note_pathspec_for_ref(AI_AUTHORSHIP_FULL_REF, commit_sha)
@@ -209,11 +230,12 @@ pub fn note_blob_oids_for_commits_from_ref(
     let mut path_to_commit = HashMap::new();
     let mut fanout_prefixes = HashSet::new();
     for commit_sha in commit_shas {
-        let flat_path = commit_sha.clone();
-        path_to_commit.insert(flat_path, commit_sha.clone());
-
-        let fanout_path = notes_path_for_object(commit_sha);
-        path_to_commit.insert(fanout_path, commit_sha.clone());
+        for (preference, path) in all_note_paths_for_object(commit_sha)
+            .into_iter()
+            .enumerate()
+        {
+            path_to_commit.insert(path, (commit_sha.clone(), preference));
+        }
         if commit_sha.len() > 2 {
             fanout_prefixes.insert(commit_sha[..2].to_string());
         }
@@ -225,14 +247,14 @@ pub fn note_blob_oids_for_commits_from_ref(
     };
 
     for entry in root_entries {
-        if let Some(commit_sha) = path_to_commit.get(&entry.path) {
+        if let Some((commit_sha, preference)) = path_to_commit.get(&entry.path) {
             if entry.object_type != "blob" {
                 return Err(GitAiError::Generic(format!(
                     "authorship note path {} in {} is {}, expected blob",
                     entry.path, notes_ref, entry.object_type
                 )));
             }
-            result.entry(commit_sha.clone()).or_insert(entry.oid);
+            result.insert(commit_sha.clone(), (*preference, entry.oid));
         }
     }
 
@@ -240,19 +262,27 @@ pub fn note_blob_oids_for_commits_from_ref(
     prefixes.sort();
     if let Some(entries) = ls_tree_note_entries(repo, notes_ref, true, &prefixes)? {
         for entry in entries {
-            if let Some(commit_sha) = path_to_commit.get(&entry.path) {
+            if let Some((commit_sha, preference)) = path_to_commit.get(&entry.path) {
                 if entry.object_type != "blob" {
                     return Err(GitAiError::Generic(format!(
                         "authorship note path {} in {} is {}, expected blob",
                         entry.path, notes_ref, entry.object_type
                     )));
                 }
-                result.entry(commit_sha.clone()).or_insert(entry.oid);
+                let should_replace = result
+                    .get(commit_sha)
+                    .is_none_or(|(current_preference, _)| preference < current_preference);
+                if should_replace {
+                    result.insert(commit_sha.clone(), (*preference, entry.oid));
+                }
             }
         }
     }
 
-    Ok(result)
+    Ok(result
+        .into_iter()
+        .map(|(commit_sha, (_preference, blob_oid))| (commit_sha, blob_oid))
+        .collect())
 }
 
 #[derive(Debug)]
@@ -422,11 +452,9 @@ pub(in crate::git) fn notes_add_batch(
 
     for (idx, (commit_sha, _note_content)) in deduped_entries.iter().enumerate() {
         let fanout_path = notes_path_for_object(commit_sha);
-        let flat_path = commit_sha.clone();
-        if flat_path != fanout_path {
-            script.extend_from_slice(format!("D {}\n", flat_path).as_bytes());
+        for existing_path in all_note_paths_for_object(commit_sha) {
+            script.extend_from_slice(format!("D {}\n", existing_path).as_bytes());
         }
-        script.extend_from_slice(format!("D {}\n", fanout_path).as_bytes());
         script.extend_from_slice(format!("M 100644 :{} {}\n", idx + 1, fanout_path).as_bytes());
     }
     script.extend_from_slice(b"\n");
@@ -489,11 +517,9 @@ pub(in crate::git) fn notes_add_blob_batch(
 
     for (commit_sha, blob_oid) in &deduped_entries {
         let fanout_path = notes_path_for_object(commit_sha);
-        let flat_path = commit_sha.clone();
-        if flat_path != fanout_path {
-            script.extend_from_slice(format!("D {}\n", flat_path).as_bytes());
+        for existing_path in all_note_paths_for_object(commit_sha) {
+            script.extend_from_slice(format!("D {}\n", existing_path).as_bytes());
         }
-        script.extend_from_slice(format!("D {}\n", fanout_path).as_bytes());
         script.extend_from_slice(format!("M 100644 {} {}\n", blob_oid, fanout_path).as_bytes());
     }
     script.extend_from_slice(b"\n");
@@ -1078,6 +1104,16 @@ mod tests {
                 "abc1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd"
             ),
             "ab/c1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd"
+        );
+    }
+
+    #[test]
+    fn test_all_note_paths_for_object_includes_every_fanout_depth() {
+        assert_eq!(all_note_paths_for_object("a"), vec!["a"]);
+        assert_eq!(all_note_paths_for_object("ab"), vec!["ab"]);
+        assert_eq!(
+            all_note_paths_for_object("abcdef"),
+            vec!["abcdef", "ab/cdef", "ab/cd/ef"]
         );
     }
 
