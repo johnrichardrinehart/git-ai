@@ -1,0 +1,20 @@
+.github/workflows/nix.yml
+  s_b53834324bbbd1::t_c6b45865128f2c 1-17,19-20
+  s_b53834324bbbd1::t_747cf28b02bc4d 18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "6ad9ce93fdd3b01a6c95ee311bcebfd595a72616",
+  "prompts": {},
+  "sessions": {
+    "s_b53834324bbbd1": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f80b1-9405-75f4-823f-878d361e4a02",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": null
+    }
+  }
+}
