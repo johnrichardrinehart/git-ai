@@ -1,0 +1,19 @@
+.github/workflows/nix.yml
+  s_b53834324bbbd1::t_c6b45865128f2c 1-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "937a2a0c325fac8cefae3883f6286e7efd731dc4",
+  "prompts": {},
+  "sessions": {
+    "s_b53834324bbbd1": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f80b1-9405-75f4-823f-878d361e4a02",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "John Rinehart <johnrichardrinehart@gmail.com>"
+    }
+  }
+}
